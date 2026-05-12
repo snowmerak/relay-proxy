@@ -34,7 +34,7 @@ func main() {
 			cfg = config.Default()
 		}
 		if !cfg.DNS.Enabled {
-			slog.Warn("dns.enabled is false in config — system DNS will be set but the DNS server won't start; enable dns in config before running the proxy")
+			slog.Warn("dns.enabled is false — system DNS will point to this proxy but the DNS server won't start; set dns.enabled=true in config.toml (it is true by default)")
 		}
 		if err := dnssetup.Setup(*dnsAddr, *dnsIface); err != nil {
 			slog.Error("DNS setup failed", "err", err)

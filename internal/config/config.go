@@ -61,7 +61,7 @@ func Default() *Config {
 			Addr: ":8080",
 		},
 		DNS: DNSConfig{
-			Enabled:   false,
+			Enabled:   true,
 			Addr:      ":53",
 			Upstreams: []string{"8.8.8.8:53", "1.1.1.1:53"},
 			SelfIP:    "127.0.0.1",
