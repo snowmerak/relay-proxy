@@ -14,10 +14,14 @@ import (
 type Prober struct {
 	timeout     time.Duration
 	concurrency int
+	transport   http.RoundTripper
 }
 
-func NewProber(timeout time.Duration, concurrency int) *Prober {
-	return &Prober{timeout: timeout, concurrency: concurrency}
+func NewProber(timeout time.Duration, concurrency int, transport http.RoundTripper) *Prober {
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	return &Prober{timeout: timeout, concurrency: concurrency, transport: transport}
 }
 
 // Probe checks all provided relays in parallel and returns those that serve appName.
@@ -33,7 +37,8 @@ func (p *Prober) Probe(ctx context.Context, appName string, relays []*registry.R
 	var wg sync.WaitGroup
 
 	client := &http.Client{
-		Timeout: p.timeout,
+		Timeout:   p.timeout,
+		Transport: p.transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse // treat redirect as "exists"
 		},

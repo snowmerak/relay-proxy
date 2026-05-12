@@ -20,6 +20,7 @@ type Fetcher struct {
 	registryURL     string
 	refreshInterval time.Duration
 	httpTimeout     time.Duration
+	transport       http.RoundTripper
 
 	mu     sync.RWMutex
 	relays []*Relay
@@ -28,11 +29,15 @@ type Fetcher struct {
 	subMu       sync.Mutex
 }
 
-func NewFetcher(registryURL string, refreshInterval, httpTimeout time.Duration) *Fetcher {
+func NewFetcher(registryURL string, refreshInterval, httpTimeout time.Duration, transport http.RoundTripper) *Fetcher {
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
 	return &Fetcher{
 		registryURL:     registryURL,
 		refreshInterval: refreshInterval,
 		httpTimeout:     httpTimeout,
+		transport:       transport,
 	}
 }
 
@@ -74,7 +79,7 @@ func (f *Fetcher) Run(ctx context.Context) {
 }
 
 func (f *Fetcher) fetch(ctx context.Context) error {
-	client := &http.Client{Timeout: f.httpTimeout}
+	client := &http.Client{Timeout: f.httpTimeout, Transport: f.transport}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.registryURL, nil)
 	if err != nil {
 		return err

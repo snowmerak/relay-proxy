@@ -102,6 +102,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Attempt with retry/fallback.
+	// Forward() buffers the response; only flushes to w on success (<500).
+	// On 5xx we discard the buffer and try the next relay.
 	tried := make(map[string]bool)
 	for attempt := 0; attempt <= h.maxRetry; attempt++ {
 		remaining := filterNot(healthy, tried)
@@ -114,16 +116,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		tried[chosen.ID] = true
 
-		crw := &captureResponseWriter{ResponseWriter: w, status: http.StatusOK}
-		h.rp.Forward(crw, r, chosen, appName)
+		status := h.rp.Forward(w, r, chosen, appName)
 
-		if crw.status < 500 {
+		if status < 500 {
 			h.cbReg.RecordSuccess(chosen.ID)
-			slog.Info("proxied", "app", appName, "relay", chosen.ID, "status", crw.status)
+			slog.Info("proxied", "app", appName, "relay", chosen.ID, "status", status)
 			return
 		}
 		h.cbReg.RecordFailure(chosen.ID)
-		slog.Warn("upstream error, retrying", "app", appName, "relay", chosen.ID, "status", crw.status, "attempt", attempt+1)
+		slog.Warn("upstream error, retrying", "app", appName, "relay", chosen.ID, "status", status, "attempt", attempt+1)
 	}
 
 	http.Error(w, "upstream error", http.StatusBadGateway)

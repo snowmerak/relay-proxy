@@ -3,8 +3,8 @@ package proxy
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/http/httputil"
-	"net/url"
 	"time"
 
 	"github.com/snowmerak/relay-proxy/internal/balancer"
@@ -20,22 +20,40 @@ func NewReverseProxy(b *balancer.RoundRobin) *ReverseProxy {
 	return &ReverseProxy{balancer: b}
 }
 
-// Forward proxies the request to the given relay under the given appName path.
-func (rp *ReverseProxy) Forward(w http.ResponseWriter, r *http.Request, relay *registry.Relay, appName string) {
-	target := relayTarget(relay, appName)
+// Forward proxies the request to the given relay for the given appName.
+//
+// The TCP connection always goes to relay.BaseURL so that relay-proxy's own
+// DNS server (if enabled) does not resolve {appName}.{relayID} back to
+// 127.0.0.1 and cause an infinite loop. Only the Host header is set to
+// {appName}.{relayID} so the relay can route to the correct tunnel.
+//
+// The response is buffered into a recorder; the caller inspects the status
+// code and decides whether to flush to the real w or retry another relay.
+func (rp *ReverseProxy) Forward(w http.ResponseWriter, r *http.Request, relay *registry.Relay, appName string) int {
+	// Connect to the relay's actual address, not to {appName}.{relayID}.
+	target := *relay.BaseURL
 
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(req *httputil.ProxyRequest) {
-			req.SetURL(target)
-			// Preserve original Host so the relay can route correctly.
+			req.SetURL(&target)
+			// Tell the relay which app to route to via the Host header.
 			req.Out.Host = fmt.Sprintf("%s.%s", appName, relay.ID)
 		},
 	}
 
 	start := time.Now()
-	crw := &captureResponseWriter{ResponseWriter: w, status: http.StatusOK}
-	proxy.ServeHTTP(crw, r)
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, r)
 	rp.balancer.RecordLatency(relay.ID, time.Since(start))
+
+	if rec.Code >= 500 {
+		// Don't flush to w yet — let the caller decide to retry.
+		return rec.Code
+	}
+
+	// Flush buffered response to the real ResponseWriter.
+	flushRecorder(w, rec)
+	return rec.Code
 }
 
 // ForwardRoot proxies a request destined for the relay root domain (no appName).
@@ -50,15 +68,19 @@ func (rp *ReverseProxy) ForwardRoot(w http.ResponseWriter, r *http.Request, rela
 	}
 
 	start := time.Now()
-	crw := &captureResponseWriter{ResponseWriter: w, status: http.StatusOK}
-	proxy.ServeHTTP(crw, r)
+	proxy.ServeHTTP(w, r)
 	rp.balancer.RecordLatency(relay.ID, time.Since(start))
 }
 
-func relayTarget(relay *registry.Relay, appName string) *url.URL {
-	u := *relay.BaseURL
-	u.Host = fmt.Sprintf("%s.%s", appName, relay.ID)
-	return &u
+// flushRecorder copies a buffered ResponseRecorder to a real ResponseWriter.
+func flushRecorder(w http.ResponseWriter, rec *httptest.ResponseRecorder) {
+	for k, vs := range rec.Header() {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(rec.Code)
+	_, _ = rec.Body.WriteTo(w)
 }
 
 // captureResponseWriter captures the status code for latency recording purposes.

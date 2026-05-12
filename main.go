@@ -15,6 +15,7 @@ import (
 	"github.com/snowmerak/relay-proxy/internal/discovery"
 	"github.com/snowmerak/relay-proxy/internal/dnsserver"
 	"github.com/snowmerak/relay-proxy/internal/dnssetup"
+	"github.com/snowmerak/relay-proxy/internal/httpclient"
 	"github.com/snowmerak/relay-proxy/internal/proxy"
 	"github.com/snowmerak/relay-proxy/internal/registry"
 )
@@ -61,8 +62,13 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	// Build a DNS-bypass transport so relay-proxy's own outbound requests
+	// (registry fetch, relay probe, health check) never go through the OS
+	// resolver — which may be pointed at ourselves via -setup-dns.
+	bypassTransport := httpclient.NewBypassTransport(cfg.DNS.Upstreams)
+
 	// 1. Registry fetcher.
-	fetcher := registry.NewFetcher(cfg.Registry.URL, cfg.Registry.RefreshInterval, cfg.Registry.HTTPTimeout)
+	fetcher := registry.NewFetcher(cfg.Registry.URL, cfg.Registry.RefreshInterval, cfg.Registry.HTTPTimeout, bypassTransport)
 
 	// 2. Balancer.
 	bal := balancer.NewRoundRobin()
@@ -83,6 +89,7 @@ func main() {
 				mgr.InvalidateRelay(relayID)
 			}
 		},
+		bypassTransport,
 	)
 
 	// 4. DNS server (optional).
@@ -123,7 +130,7 @@ func main() {
 	})
 
 	// 6. Discovery manager.
-	prober := discovery.NewProber(cfg.Discovery.ProbeTimeout, cfg.Discovery.ProbeConcurrent)
+	prober := discovery.NewProber(cfg.Discovery.ProbeTimeout, cfg.Discovery.ProbeConcurrent, bypassTransport)
 	mgr = discovery.NewManager(cfg.Discovery.ProbeTTL, prober, fetcher.Relays, cbReg.IsHealthy)
 
 	// 7. HTTP handler.

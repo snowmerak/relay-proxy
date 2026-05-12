@@ -15,6 +15,7 @@ type Registry struct {
 	settings   Settings
 	hcInterval time.Duration
 	hcTimeout  time.Duration
+	transport  http.RoundTripper
 
 	mu       sync.RWMutex
 	breakers map[string]*Breaker // keyed by relay ID
@@ -23,11 +24,15 @@ type Registry struct {
 	onOpen func(relayID string)
 }
 
-func NewRegistry(settings Settings, hcInterval, hcTimeout time.Duration, onOpen func(relayID string)) *Registry {
+func NewRegistry(settings Settings, hcInterval, hcTimeout time.Duration, onOpen func(relayID string), transport http.RoundTripper) *Registry {
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
 	return &Registry{
 		settings:   settings,
 		hcInterval: hcInterval,
 		hcTimeout:  hcTimeout,
+		transport:  transport,
 		breakers:   make(map[string]*Breaker),
 		onOpen:     onOpen,
 	}
@@ -98,7 +103,7 @@ func (r *Registry) healthCheckLoop(ctx context.Context, relay *registry.Relay, b
 	ticker := time.NewTicker(r.hcInterval)
 	defer ticker.Stop()
 
-	client := &http.Client{Timeout: r.hcTimeout}
+	client := &http.Client{Timeout: r.hcTimeout, Transport: r.transport}
 	healthURL := relay.BaseURL.String()
 
 	for {
