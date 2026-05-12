@@ -26,21 +26,25 @@ const (
 
 // Server is a UDP DNS server.
 type Server struct {
-	addr     string
-	upstream string
-	selfIP   net.IP
+	addr      string
+	upstreams []string // tried in order; falls back to next on error
+	selfIP    net.IP
 
 	mu      sync.RWMutex
 	domains []string // relay domain suffixes, e.g. "portal.thumbgo.kr"
 }
 
 // New creates a Server. selfIP is the IPv4 address returned for wildcard relay queries.
-func New(addr, upstream, selfIP string) (*Server, error) {
+// upstreams is a list of upstream DNS servers; the first reachable one is used.
+func New(addr string, upstreams []string, selfIP string) (*Server, error) {
+	if len(upstreams) == 0 {
+		return nil, fmt.Errorf("at least one upstream DNS server is required")
+	}
 	ip := net.ParseIP(selfIP).To4()
 	if ip == nil {
 		return nil, fmt.Errorf("invalid selfIP %q (must be IPv4)", selfIP)
 	}
-	return &Server{addr: addr, upstream: upstream, selfIP: ip}, nil
+	return &Server{addr: addr, upstreams: upstreams, selfIP: ip}, nil
 }
 
 // SetDomains replaces the list of relay domain suffixes.
@@ -117,8 +121,8 @@ func (s *Server) handle(ctx context.Context, pc net.PacketConn, src net.Addr, ms
 		}
 	}
 
-	// Forward to upstream.
-	resp, err := forward(ctx, s.upstream, msg)
+	// Forward to upstream, trying each in order.
+	resp, err := forwardWithFallback(ctx, s.upstreams, msg)
 	if err != nil {
 		slog.Warn("dns forward failed", "name", name, "err", err)
 		return
@@ -176,7 +180,21 @@ func buildAResponse(query []byte, afterQuestion int, ip net.IP) []byte {
 	return resp
 }
 
-// forward sends msg to upstream DNS over UDP and returns the response.
+// forwardWithFallback tries each upstream in order and returns the first successful response.
+func forwardWithFallback(ctx context.Context, upstreams []string, msg []byte) ([]byte, error) {
+	var lastErr error
+	for _, upstream := range upstreams {
+		resp, err := forward(ctx, upstream, msg)
+		if err == nil {
+			return resp, nil
+		}
+		slog.Debug("upstream failed, trying next", "upstream", upstream, "err", err)
+		lastErr = err
+	}
+	return nil, fmt.Errorf("all upstreams failed; last error: %w", lastErr)
+}
+
+// forward sends msg to a single upstream DNS server over UDP and returns the response.
 func forward(ctx context.Context, upstream string, msg []byte) ([]byte, error) {
 	dialer := net.Dialer{Timeout: 3 * time.Second}
 	conn, err := dialer.DialContext(ctx, "udp", upstream)

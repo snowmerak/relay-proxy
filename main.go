@@ -88,7 +88,7 @@ func main() {
 	// 4. DNS server (optional).
 	var dnsSrv *dnsserver.Server
 	if cfg.DNS.Enabled {
-		dnsSrv, err = dnsserver.New(cfg.DNS.Addr, cfg.DNS.Upstream, cfg.DNS.SelfIP)
+		dnsSrv, err = dnsserver.New(cfg.DNS.Addr, cfg.DNS.Upstreams, cfg.DNS.SelfIP)
 		if err != nil {
 			slog.Error("dns server init failed", "err", err)
 			os.Exit(1)

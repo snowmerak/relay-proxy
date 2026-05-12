@@ -22,9 +22,10 @@ type ServerConfig struct {
 }
 
 type DNSConfig struct {
-	Enabled  bool   `toml:"enabled"`
-	Addr     string `toml:"addr"`
-	Upstream string `toml:"upstream"`
+	Enabled bool   `toml:"enabled"`
+	Addr    string `toml:"addr"`
+	// Upstreams is the list of upstream DNS servers tried in order on failure.
+	Upstreams []string `toml:"upstreams"`
 	// SelfIP is the IP address returned in A records for relay wildcard domains.
 	// Set this to the public IP of this proxy. Defaults to 127.0.0.1 (local use).
 	SelfIP string `toml:"self_ip"`
@@ -60,10 +61,10 @@ func Default() *Config {
 			Addr: ":8080",
 		},
 		DNS: DNSConfig{
-			Enabled:  false,
-			Addr:     ":53",
-			Upstream: "8.8.8.8:53",
-			SelfIP:   "127.0.0.1",
+			Enabled:   false,
+			Addr:      ":53",
+			Upstreams: []string{"8.8.8.8:53", "1.1.1.1:53"},
+			SelfIP:    "127.0.0.1",
 		},
 		Registry: RegistryConfig{
 			URL:             "https://raw.githubusercontent.com/gosuda/portal-tunnel/main/registry.json",
