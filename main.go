@@ -9,10 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/snowmerak/relay-proxy/internal/balancer"
 	"github.com/snowmerak/relay-proxy/internal/circuitbreaker"
 	"github.com/snowmerak/relay-proxy/internal/config"
-	"github.com/snowmerak/relay-proxy/internal/discovery"
 	"github.com/snowmerak/relay-proxy/internal/dnsserver"
 	"github.com/snowmerak/relay-proxy/internal/dnssetup"
 	"github.com/snowmerak/relay-proxy/internal/httpclient"
@@ -70,29 +68,21 @@ func main() {
 	// 1. Registry fetcher.
 	fetcher := registry.NewFetcher(cfg.Registry.URL, cfg.Registry.RefreshInterval, cfg.Registry.HTTPTimeout, bypassTransport)
 
-	// 2. Balancer.
-	bal := balancer.NewRoundRobin()
-
-	// 3. Circuit breaker registry.
+	// 2. Circuit breaker registry.
 	cbSettings := circuitbreaker.Settings{
 		FailureThreshold: cfg.CircuitBreaker.FailureThreshold,
 		SuccessThreshold: cfg.CircuitBreaker.SuccessThreshold,
 		OpenTimeout:      cfg.CircuitBreaker.OpenTimeout,
 	}
-	var mgr *discovery.Manager
 	cbReg := circuitbreaker.NewRegistry(
 		cbSettings,
 		cfg.CircuitBreaker.HealthCheckInterval,
 		cfg.CircuitBreaker.HealthCheckTimeout,
-		func(relayID string) {
-			if mgr != nil {
-				mgr.InvalidateRelay(relayID)
-			}
-		},
+		nil,
 		bypassTransport,
 	)
 
-	// 4. DNS server (optional).
+	// 3. DNS server (optional).
 	var dnsSrv *dnsserver.Server
 	if cfg.DNS.Enabled {
 		dnsSrv, err = dnsserver.New(cfg.DNS.Addr, cfg.DNS.Upstreams, cfg.DNS.SelfIP)
@@ -107,16 +97,14 @@ func main() {
 		}()
 	}
 
-	// 5. Wire fetcher → circuit breaker + balancer + DNS registration.
+	// 4. Wire fetcher → circuit breaker + DNS.
 	fetcher.Subscribe(func(added, removed []*registry.Relay) {
 		for _, r := range added {
 			cbReg.Add(ctx, r)
-			bal.Register(r)
 			slog.Info("relay added", "id", r.ID)
 		}
 		for _, r := range removed {
 			cbReg.Remove(r.ID)
-			bal.Deregister(r.ID)
 			slog.Info("relay removed", "id", r.ID)
 		}
 		if dnsSrv != nil {
@@ -129,12 +117,9 @@ func main() {
 		}
 	})
 
-	// 6. Discovery manager.
-	prober := discovery.NewProber(cfg.Discovery.ProbeTimeout, cfg.Discovery.ProbeConcurrent, bypassTransport)
-	mgr = discovery.NewManager(cfg.Discovery.ProbeTTL, prober, fetcher.Relays, cbReg.IsHealthy)
-
-	// 7. HTTP handler.
-	handler := proxy.NewHandler(fetcher, cbReg, mgr, bal)
+	// 5. HTTP handler.
+	rp := proxy.NewReverseProxy()
+	handler := proxy.NewHandler(fetcher, cbReg, rp)
 	mux := http.NewServeMux()
 	mux.Handle("/_relay/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -147,10 +132,10 @@ func main() {
 		Handler: mux,
 	}
 
-	// 8. Start registry fetch loop.
+	// 6. Start registry fetch loop.
 	go fetcher.Run(ctx)
 
-	// 9. Start HTTP server.
+	// 7. Start HTTP server.
 	go func() {
 		slog.Info("relay-proxy starting", "addr", cfg.Server.Addr)
 		var srvErr error
