@@ -104,19 +104,21 @@ func (s *Server) handle(ctx context.Context, pc net.PacketConn, src net.Addr, ms
 
 	name, afterName, err := parseName(msg, 12)
 	if err != nil || afterName+4 > len(msg) {
+		slog.Warn("dns: malformed query", "src", src, "err", err)
 		return
 	}
 	qtype := binary.BigEndian.Uint16(msg[afterName : afterName+2])
 	afterQuestion := afterName + 4 // skip QTYPE + QCLASS
 
 	name = strings.ToLower(strings.TrimSuffix(name, "."))
+	slog.Debug("dns: query", "name", name, "qtype", qtype, "src", src)
 
 	// For A queries that match a relay domain, answer directly.
 	if qtype == dnsTypeA && s.matchesDomain(name) {
 		resp := buildAResponse(msg, afterQuestion, s.selfIP)
 		if resp != nil {
 			_, _ = pc.WriteTo(resp, src)
-			slog.Debug("dns answered", "name", name, "ip", s.selfIP)
+			slog.Info("dns: answered relay domain", "name", name, "ip", s.selfIP, "src", src)
 			return
 		}
 	}
@@ -124,9 +126,10 @@ func (s *Server) handle(ctx context.Context, pc net.PacketConn, src net.Addr, ms
 	// Forward to upstream, trying each in order.
 	resp, err := forwardWithFallback(ctx, s.upstreams, msg)
 	if err != nil {
-		slog.Warn("dns forward failed", "name", name, "err", err)
+		slog.Warn("dns: forward failed", "name", name, "src", src, "err", err)
 		return
 	}
+	slog.Debug("dns: forwarded", "name", name, "src", src)
 	_, _ = pc.WriteTo(resp, src)
 }
 

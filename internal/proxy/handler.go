@@ -57,8 +57,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	appName, relay := h.parseHost(host)
-	if appName == "" {
+	if relay == nil {
+		// Host does not match any known relay domain.
+		slog.Warn("proxy: unknown host", "host", host)
 		http.Error(w, "unknown host", http.StatusNotFound)
+		return
+	}
+
+	// No appName: the relay root itself was requested (e.g. portal.thumbgo.kr).
+	// Forward directly to that relay without going through discovery.
+	if appName == "" {
+		slog.Info("proxy: relay root request", "relay", relay.ID)
+		h.rp.ForwardRoot(w, r, relay)
 		return
 	}
 
@@ -119,7 +129,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "upstream error", http.StatusBadGateway)
 }
 
-// parseHost extracts (appName, hintRelay) from a host like "gopher.portal.thumbgo.kr".
+// parseHost extracts (appName, hintRelay) from a host.
+//
+// "gopher.portal.thumbgo.kr" → ("gopher", relay)
+// "portal.thumbgo.kr"        → ("", relay)  — relay root, no appName
 func (h *Handler) parseHost(host string) (appName string, hintRelay *registry.Relay) {
 	for _, relay := range h.fetcher.Relays() {
 		suffix := relay.ID
@@ -127,6 +140,10 @@ func (h *Handler) parseHost(host string) (appName string, hintRelay *registry.Re
 			appName = strings.TrimSuffix(host, "."+suffix)
 			hintRelay = relay
 			return
+		}
+		// Exact match: the relay domain itself with no subdomain.
+		if host == suffix {
+			return "", relay
 		}
 	}
 	return "", nil

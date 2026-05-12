@@ -38,6 +38,23 @@ func (rp *ReverseProxy) Forward(w http.ResponseWriter, r *http.Request, relay *r
 	rp.balancer.RecordLatency(relay.ID, time.Since(start))
 }
 
+// ForwardRoot proxies a request destined for the relay root domain (no appName).
+func (rp *ReverseProxy) ForwardRoot(w http.ResponseWriter, r *http.Request, relay *registry.Relay) {
+	target := *relay.BaseURL
+
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(req *httputil.ProxyRequest) {
+			req.SetURL(&target)
+			req.Out.Host = relay.ID
+		},
+	}
+
+	start := time.Now()
+	crw := &captureResponseWriter{ResponseWriter: w, status: http.StatusOK}
+	proxy.ServeHTTP(crw, r)
+	rp.balancer.RecordLatency(relay.ID, time.Since(start))
+}
+
 func relayTarget(relay *registry.Relay, appName string) *url.URL {
 	u := *relay.BaseURL
 	u.Host = fmt.Sprintf("%s.%s", appName, relay.ID)
