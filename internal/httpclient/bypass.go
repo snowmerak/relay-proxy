@@ -19,8 +19,17 @@ import (
 // resolver. Falls back to http.DefaultTransport behaviour when upstreams is
 // empty.
 func NewBypassTransport(upstreams []string) *http.Transport {
+	d := NewBypassDialer(upstreams)
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DialContext = d.DialContext
+	return t
+}
+
+// NewBypassDialer returns a *net.Dialer that resolves DNS using the provided
+// upstream addresses directly, bypassing the OS resolver.
+func NewBypassDialer(upstreams []string) *net.Dialer {
 	if len(upstreams) == 0 {
-		return http.DefaultTransport.(*http.Transport).Clone()
+		return &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 	}
 
 	resolver := &net.Resolver{
@@ -38,13 +47,9 @@ func NewBypassTransport(upstreams []string) *http.Transport {
 		},
 	}
 
-	dialer := &net.Dialer{
+	return &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
 		Resolver:  resolver,
 	}
-
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.DialContext = dialer.DialContext
-	return t
 }

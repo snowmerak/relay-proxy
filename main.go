@@ -16,6 +16,7 @@ import (
 	"github.com/snowmerak/relay-proxy/internal/httpclient"
 	"github.com/snowmerak/relay-proxy/internal/proxy"
 	"github.com/snowmerak/relay-proxy/internal/registry"
+	"github.com/snowmerak/relay-proxy/internal/tcptunnel"
 )
 
 func main() {
@@ -60,10 +61,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Build a DNS-bypass transport so relay-proxy's own outbound requests
-	// (registry fetch, relay probe, health check) never go through the OS
+	// Build a DNS-bypass transport/dialer so relay-proxy's own outbound requests
+	// (registry fetch, health check, TLS tunnel backend) never go through the OS
 	// resolver — which may be pointed at ourselves via -setup-dns.
 	bypassTransport := httpclient.NewBypassTransport(cfg.DNS.Upstreams)
+	bypassDialer := httpclient.NewBypassDialer(cfg.DNS.Upstreams)
 
 	// 1. Registry fetcher.
 	fetcher := registry.NewFetcher(cfg.Registry.URL, cfg.Registry.RefreshInterval, cfg.Registry.HTTPTimeout, bypassTransport)
@@ -132,10 +134,29 @@ func main() {
 		Handler: mux,
 	}
 
-	// 6. Start registry fetch loop.
+	// 6. TLS passthrough tunnel for HTTPS (SNI-based TCP proxy).
+	if cfg.Server.TLSTunnelAddr != "" {
+		relayIDs := func() []string {
+			all := fetcher.Relays()
+			ids := make([]string, len(all))
+			for i, r := range all {
+				ids[i] = r.ID
+			}
+			return ids
+		}
+		tunnel := tcptunnel.New(cfg.Server.TLSTunnelAddr, bypassDialer, relayIDs)
+		go func() {
+			if tunnelErr := tunnel.Run(ctx); tunnelErr != nil {
+				slog.Error("tls tunnel error", "err", tunnelErr)
+				cancel()
+			}
+		}()
+	}
+
+	// 7. Start registry fetch loop.
 	go fetcher.Run(ctx)
 
-	// 7. Start HTTP server.
+	// 8. Start HTTP server.
 	go func() {
 		slog.Info("relay-proxy starting", "addr", cfg.Server.Addr)
 		var srvErr error

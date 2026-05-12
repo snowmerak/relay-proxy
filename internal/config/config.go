@@ -16,9 +16,10 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Addr    string `toml:"addr"`
-	TLSCert string `toml:"tls_cert"`
-	TLSKey  string `toml:"tls_key"`
+	Addr          string `toml:"addr"`
+	TLSTunnelAddr string `toml:"tls_tunnel_addr"`
+	TLSCert       string `toml:"tls_cert"`
+	TLSKey        string `toml:"tls_key"`
 }
 
 type DNSConfig struct {
@@ -58,7 +59,8 @@ type BalancerConfig struct {
 func Default() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Addr: ":8080",
+			Addr:          ":80",
+			TLSTunnelAddr: ":443",
 		},
 		DNS: DNSConfig{
 			Enabled:   true,
